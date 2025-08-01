@@ -174,11 +174,11 @@ class VectorStoreService:
 
     def _parse_jsonl_file(self, file_path: Path, index_name: str) -> tuple:
         """Parse JSONL file and return documents, metadatas, and ids.
-        
+
         Arguments:
             file_path: Path to JSONL file
             index_name: Name of the index
-            
+
         Returns:
             Tuple of (documents, metadatas, ids)
         """
@@ -217,11 +217,11 @@ class VectorStoreService:
 
     def _parse_jsonl_line(self, line: str, line_num: int) -> tuple:
         """Parse a single JSONL line.
-        
+
         Arguments:
             line: JSON line to parse
             line_num: Line number for error reporting
-            
+
         Returns:
             Tuple of (key, value) or None if parsing fails
         """

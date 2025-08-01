@@ -29,61 +29,38 @@ app = typer.Typer(
 app.add_typer(rag_app, name="")
 
 
-def setup_logging(debug: bool = False) -> None:
-    """Setup colored logging configuration.
+def setup_logging(debug: bool = False) -> str:
+    """Setup logging configuration with file output only.
 
     Arguments:
         debug: Enable debug-level logging if True
+
+    Returns:
+        Path to the log file being used
     """
-    if debug:
-        handler = colorlog.StreamHandler()
-        handler.setFormatter(
-            colorlog.ColoredFormatter(
-                "[ %(asctime)s ] %(log_color)s%(levelname)7s%(reset)s: %(module)s.%(funcName)s: %(message)s",
-                log_colors={
-                    "DEBUG": "cyan",
-                    "INFO": "green",
-                    "WARNING": "yellow",
-                    "ERROR": "red",
-                    "CRITICAL": "red,bg_white",
-                },
-            )
-        )
-        logging.basicConfig(level=logging.DEBUG, handlers=[handler], force=True)
-    else:
-        log_dir = Path.home() / ".logs"
-        log_dir.mkdir(exist_ok=True)
+    log_dir = Path.home() / ".logs"
+    log_dir.mkdir(exist_ok=True)
 
-        log_file = log_dir / f"simple-rag.log.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    log_file = log_dir / f"simplerag.log.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        handler = colorlog.StreamHandler()
-        handler.setFormatter(
-            colorlog.ColoredFormatter(
-                "[ %(asctime)s ] %(log_color)s%(levelname)7s%(reset)s: %(module)s.%(funcName)s: %(message)s",
-                log_colors={
-                    "DEBUG": "cyan",
-                    "INFO": "green",
-                    "WARNING": "yellow",
-                    "ERROR": "red",
-                    "CRITICAL": "red,bg_white",
-                },
-            )
-        )
+    # Only log to file, no console output for regular operations
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter("[ %(asctime)s ] %(levelname)7s: %(module)s.%(funcName)s: %(message)s"))
 
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(
-            logging.Formatter("[ %(asctime)s ] %(levelname)7s: %(module)s.%(funcName)s: %(message)s")
-        )
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(level=level, handlers=[file_handler], force=True)
 
-        logging.basicConfig(level=logging.INFO, handlers=[handler, file_handler], force=True)
+    return str(log_file)
 
 
 @app.callback()
 def main(
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging to stdout"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
 ) -> None:
     """Simple RAG CLI tool using ChromaDB for local vector storage."""
-    setup_logging(debug)
+    log_file = setup_logging(debug)
+    # Show log file path on stderr
+    typer.echo(f"Logging to: {log_file}", err=True)
 
 
 if __name__ == "__main__":

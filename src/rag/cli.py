@@ -1,6 +1,8 @@
 """CLI commands for simple-rag application."""
 
+import json
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 import typer
@@ -34,7 +36,6 @@ def get_vector_store() -> VectorStoreService:
         return VectorStoreService()
     except Exception as e:
         logger.error("Failed to initialize vector store: %s", str(e))
-        console.print(f"[red]Error: Failed to initialize vector store: {str(e)}[/red]")
         raise typer.Exit(1) from e
 
 
@@ -105,92 +106,83 @@ def load_command(
 def retrieve_command(
     index: str = typer.Option(..., "--index", help="Index name to search in"),
     query: str = typer.Argument(..., help="Query text to search for"),
-    limit: int = typer.Option(5, "--limit", "-n", help="Maximum number of results"),
-    show_details: bool = typer.Option(False, "--details", "-d", help="Show detailed results including distances"),
+    threshold: Optional[float] = typer.Option(None, "--threshold", "-t", help="Distance threshold to consider"),
+    number: int = typer.Option(1, "--number", "-n", help="Number of values to display"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output in JSON format"),
 ) -> None:
     """Retrieve similar documents using RAG search with cosine distance.
 
     Example:
     simple-rag retrieve --index projects "SDDS project"
+    simple-rag retrieve --index projects "SDDS project" --threshold 0.5 --number 3 --json
     """
-    if limit <= 0:
-        console.print("[red]Error: Limit must be positive[/red]")
+    if number <= 0:
+        logger.error("Number must be positive: %d", number)
         raise typer.Exit(1)
 
     vector_store = get_vector_store()
 
     try:
-        console.print(f"Searching for '{query}' in index '{index}'...")
-        results = vector_store.retrieve(index, query, limit)
+        # Retrieve more results than needed to apply threshold filtering
+        max_results = max(number * 2, 10)
+        results = vector_store.retrieve(index, query, max_results)
 
         if not results:
-            _handle_no_results(vector_store, query, index)
-            return
+            logger.info("No results found for query '%s' in index '%s'", query, index)
+            raise typer.Exit(0)
 
-        _display_results(results, show_details)
+        # Apply threshold filtering if specified
+        if threshold is not None:
+            results = [r for r in results if r.get("distance", 0) <= threshold]
+
+        # Limit to requested number
+        results = results[:number]
+
+        if not results:
+            logger.info("No results found within threshold %s", threshold)
+            raise typer.Exit(0)
+
+        # Output results
+        if json_output:
+            _output_json_results(results)
+        else:
+            _output_simple_results(results)
 
     except CollectionNotFoundError as e:
-        _handle_collection_not_found(vector_store, e)
+        logger.error("Collection not found: %s", str(e))
         raise typer.Exit(1)
 
     except VectorStoreError as e:
-        console.print(f"[red]Error: {str(e)}[/red]")
+        logger.error("Vector store error: %s", str(e))
         raise typer.Exit(1)
 
     except Exception as e:
         logger.error("Unexpected error during retrieve: %s", str(e))
-        console.print(f"[red]Unexpected error: {str(e)}[/red]")
         raise typer.Exit(1)
 
 
-def _handle_no_results(vector_store: VectorStoreService, query: str, index: str) -> None:
-    """Handle case when no results are found."""
-    console.print(f"[yellow]No results found for query '{query}' in index '{index}'[/yellow]")
-    _show_available_collections(vector_store)
-
-
-def _handle_collection_not_found(vector_store: VectorStoreService, error: Exception) -> None:
-    """Handle collection not found error."""
-    console.print(f"[red]Error: {str(error)}[/red]")
-    _show_available_collections(vector_store)
-
-
-def _show_available_collections(vector_store: VectorStoreService) -> None:
-    """Show available collections to the user."""
-    try:
-        collections = vector_store.list_collections()
-        if collections:
-            console.print(f"\nAvailable indexes: {', '.join(collections)}")
-        else:
-            console.print("\nNo indexes found. Use 'load' command to add data first.")
-    except (VectorStoreError, CollectionNotFoundError):
-        # Gracefully handle collection listing errors in helper function
-        logger.debug("Failed to list collections in helper function")
-
-
-def _display_results(results: list, show_details: bool) -> None:
-    """Display search results in formatted panels."""
-    console.print(f"\n[green]Found {len(results)} results:[/green]\n")
-
-    for i, result in enumerate(results, 1):
+def _output_simple_results(results: list) -> None:
+    """Output simple results - just the values to stdout."""
+    for result in results:
         metadata = result.get("metadata", {})
-        document = result.get("document", "")
-        distance = result.get("distance")
+        value = metadata.get("value", "")
+        print(value)
 
-        # Create result panel
-        title = f"Result {i}"
-        if distance is not None:
-            title += f" (distance: {distance:.4f})"
 
-        content = f"[bold]Key:[/bold] {document}\n"
-        content += f"[bold]Value:[/bold] {metadata.get('value', 'N/A')}"
+def _output_json_results(results: list) -> None:
+    """Output JSON results with value, key, and distance."""
+    output_data = []
+    for result in results:
+        metadata = result.get("metadata", {})
+        output_data.append(
+            {
+                "value": metadata.get("value", ""),
+                "key": metadata.get("key", ""),
+                "distance": result.get("distance", 0.0),
+            }
+        )
 
-        if show_details:
-            content += f"\n[bold]ID:[/bold] {result.get('id', 'N/A')}"
-            content += f"\n[bold]Type:[/bold] {metadata.get('type', 'N/A')}"
-
-        panel = Panel(content, title=title, expand=False)
-        console.print(panel)
+    print(json.dumps(output_data, indent=2))
 
 
 @app.command("list")

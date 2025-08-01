@@ -70,8 +70,11 @@ simple-rag retrieve --index projects "SDDS project"
 With additional options:
 
 ```bash
-# Limit results and show detailed information
-simple-rag retrieve --index projects "SDDS project" --limit 3 --details
+# Filter by distance threshold and limit results
+simple-rag retrieve --index projects "SDDS project" --threshold 0.5 --number 3
+
+# Output in JSON format with key, value, and distance
+simple-rag retrieve --index projects "SDDS project" --json
 ```
 
 ### Managing Indexes
@@ -115,12 +118,20 @@ Retrieve similar documents using RAG search.
 
 **Options:**
 - `--index`: Index name to search in (required)
-- `--limit, -n`: Maximum number of results (default: 5)
-- `--details, -d`: Show detailed results including distances
+- `--threshold, -t`: Distance threshold to filter results (optional)
+- `--number, -n`: Number of results to display (default: 1)
+- `--json, -j`: Output in JSON format with key, value, and distance (optional)
 
-**Example:**
+**Examples:**
 ```bash
-simple-rag retrieve --index projects "SDDS project" --limit 3 --details
+# Basic search (returns just the value)
+simple-rag retrieve --index projects "SDDS project"
+
+# Filter by threshold and get multiple results
+simple-rag retrieve --index projects "SDDS project" --threshold 0.5 --number 3
+
+# JSON output with detailed information
+simple-rag retrieve --index projects "SDDS project" --json
 ```
 
 #### `list` Command
@@ -276,13 +287,13 @@ uv run bandit -r src/
 
 ### Logging
 
+Logs are automatically saved to `~/.logs/simplerag.log.<datetime>` files. The CLI displays the log file name on stderr for each run.
+
 Enable debug logging for troubleshooting:
 
 ```bash
 simple-rag --debug <command>
 ```
-
-Logs are automatically saved to `~/.logs/simple-rag.log.*` files.
 
 ## License
 
