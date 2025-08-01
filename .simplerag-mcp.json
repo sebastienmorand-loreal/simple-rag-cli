@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "simplerag": {
+      "command": "/Users/sebastien.morand/projects/misc/simple-rag/.venv/bin/python",
+      "args": [
+        "/Users/sebastien.morand/projects/misc/simple-rag/src/simplerag.py",
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}
