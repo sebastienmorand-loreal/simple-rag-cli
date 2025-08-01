@@ -1,12 +1,46 @@
 """Custom embedding function for ChromaDB using transformer models."""
 
 import logging
+import sys
+import io
+import contextlib
 from typing import List
 import torch
 from chromadb.api.types import EmbeddingFunction, Documents
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def suppress_sharding_output():
+    """Context manager to suppress transformer model sharding output."""
+    # Capture both stdout and stderr to filter out sharding warnings
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    captured_stdout = io.StringIO()
+    captured_stderr = io.StringIO()
+
+    try:
+        sys.stdout = captured_stdout
+        sys.stderr = captured_stderr
+        yield
+    finally:
+        # Restore original streams
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+
+        # Filter and print non-sharding content from stdout
+        stdout_content = captured_stdout.getvalue()
+        for line in stdout_content.splitlines():
+            if "layers were not sharded" not in line:
+                print(line)
+
+        # Filter and print non-sharding content from stderr
+        stderr_content = captured_stderr.getvalue()
+        for line in stderr_content.splitlines():
+            if "layers were not sharded" not in line:
+                print(line, file=original_stderr)
 
 
 class TransformerEmbeddingFunction(EmbeddingFunction):
@@ -40,7 +74,8 @@ class TransformerEmbeddingFunction(EmbeddingFunction):
 
         try:
             logger.info("Loading embedding model: %s", model_name)
-            self.model = SentenceTransformer(model_name)
+            with suppress_sharding_output():
+                self.model = SentenceTransformer(model_name)
 
             if self.use_cuda:
                 self.model = self.model.to("cuda")

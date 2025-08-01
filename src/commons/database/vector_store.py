@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.api.models.Collection import Collection
 
-from commons.models.embedding import TransformerEmbeddingFunction
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +39,13 @@ class VectorStoreService:
 
         Exceptions:
             VectorStoreError: If the storage path cannot be created or accessed
-            OSError: If the embedding model cannot be loaded
         """
         if storage_path is None:
             storage_path = Path.home() / ".simple-rag"
 
         self.storage_path = storage_path
         self.embedding_model = embedding_model
+        self._embedding_function = None  # Lazy loading
 
         try:
             self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -56,18 +55,41 @@ class VectorStoreService:
             raise VectorStoreError(f"Failed to create storage directory: {str(e)}") from e
 
         try:
-            self.embedding_function = TransformerEmbeddingFunction(embedding_model)
             self.client = chromadb.PersistentClient(path=str(self.storage_path))
             logger.info("ChromaDB client initialized successfully")
         except Exception as e:
             logger.error("Failed to initialize ChromaDB client: %s", str(e))
             raise VectorStoreError(f"Failed to initialize ChromaDB client: {str(e)}") from e
 
-    def get_or_create_collection(self, index_name: str) -> Collection:
+    @property
+    def embedding_function(self):
+        """Lazy loading property for embedding function.
+
+        Only loads the transformer model when actually needed for embedding operations.
+
+        Returns:
+            TransformerEmbeddingFunction instance
+
+        Exceptions:
+            OSError: If the embedding model cannot be loaded
+        """
+        from commons.models.embedding import TransformerEmbeddingFunction
+
+        if self._embedding_function is None:
+            logger.info("Loading embedding model on demand: %s", self.embedding_model)
+            try:
+                self._embedding_function = TransformerEmbeddingFunction(self.embedding_model)
+            except Exception as e:
+                logger.error("Failed to load embedding model %s: %s", self.embedding_model, str(e))
+                raise OSError(f"Failed to load embedding model {self.embedding_model}") from e
+        return self._embedding_function
+
+    def get_or_create_collection(self, index_name: str, for_embedding: bool = True) -> Collection:
         """Get or create a collection by index name.
 
         Arguments:
             index_name: Name of the collection/index
+            for_embedding: Whether this collection will be used for embedding operations
 
         Returns:
             ChromaDB Collection object
@@ -83,9 +105,15 @@ class VectorStoreService:
         sanitized_name = index_name.strip().lower().replace(" ", "_").replace("-", "_")
 
         try:
-            collection = self.client.get_or_create_collection(
-                name=sanitized_name, embedding_function=self.embedding_function
-            )
+            if for_embedding:
+                # Load embedding function for operations that need it (load, retrieve)
+                collection = self.client.get_or_create_collection(
+                    name=sanitized_name, embedding_function=self.embedding_function
+                )
+            else:
+                # For read-only operations (list, info, dump), don't load embedding function
+                collection = self.client.get_or_create_collection(name=sanitized_name)
+
             logger.debug("Collection '%s' ready", sanitized_name)
             return collection
         except Exception as e:
@@ -110,7 +138,7 @@ class VectorStoreService:
         if not value or not value.strip():
             raise ValueError("Value cannot be empty")
 
-        collection = self.get_or_create_collection(index_name)
+        collection = self.get_or_create_collection(index_name, for_embedding=True)
 
         # Generate unique ID based on key
         doc_id = f"{index_name}_{hash(key.strip()) % (10**8):08d}"
@@ -155,7 +183,7 @@ class VectorStoreService:
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        collection = self.get_or_create_collection(index_name)
+        collection = self.get_or_create_collection(index_name, for_embedding=True)
         documents, metadatas, ids = self._parse_jsonl_file(file_path, index_name)
 
         if not documents:
@@ -274,7 +302,7 @@ class VectorStoreService:
             raise ValueError("n_results must be positive")
 
         try:
-            collection = self.get_or_create_collection(index_name)
+            collection = self.get_or_create_collection(index_name, for_embedding=True)
 
             # Check if collection has any documents
             count = collection.count()
@@ -339,7 +367,8 @@ class VectorStoreService:
             VectorStoreError: If operation fails
         """
         try:
-            collection = self.get_or_create_collection(index_name)
+            # Use for_embedding=False since we only need to read collection info
+            collection = self.get_or_create_collection(index_name, for_embedding=False)
             count = collection.count()
 
             return {
@@ -351,3 +380,104 @@ class VectorStoreService:
         except Exception as e:
             logger.error("Failed to get collection info for '%s': %s", index_name, str(e))
             raise VectorStoreError(f"Failed to get collection info: {str(e)}") from e
+
+    def dump_all_data(self, index_name: str) -> List[Dict[str, Any]]:
+        """Dump all data from a specific index.
+
+        Arguments:
+            index_name: Name of the index/collection to dump
+
+        Returns:
+            List of dictionaries containing all documents and metadata
+
+        Exceptions:
+            CollectionNotFoundError: If the specified index doesn't exist
+            VectorStoreError: If dump operation fails
+        """
+        try:
+            collection = self.get_or_create_collection(index_name, for_embedding=False)
+
+            # Get all documents
+            result = collection.get(where={"type": index_name})
+
+            # Format results
+            formatted_data = []
+            for i in range(len(result["ids"])):
+                entry = {
+                    "id": result["ids"][i],
+                    "document": result["documents"][i] if result["documents"] else "",
+                    "metadata": result["metadatas"][i] if result["metadatas"] else {},
+                }
+                formatted_data.append(entry)
+
+            logger.info("Dumped %d entries from index '%s'", len(formatted_data), index_name)
+            return formatted_data
+
+        except Exception as e:
+            logger.error("Failed to dump data from index '%s': %s", index_name, str(e))
+            if "does not exist" in str(e).lower():
+                raise CollectionNotFoundError(f"Index '{index_name}' does not exist") from e
+            raise VectorStoreError(f"Failed to dump data from index '{index_name}': {str(e)}") from e
+
+    def delete_collection(self, index_name: str) -> None:
+        """Delete an entire collection and all its data.
+
+        Arguments:
+            index_name: Name of the index/collection to delete
+
+        Exceptions:
+            CollectionNotFoundError: If the specified index doesn't exist
+            VectorStoreError: If deletion fails
+        """
+        try:
+            # Check if collection exists first
+            collections = self.list_collections()
+            if index_name not in collections:
+                raise CollectionNotFoundError(f"Index '{index_name}' does not exist")
+
+            # Delete the collection
+            self.client.delete_collection(name=index_name)
+            logger.info("Successfully deleted index '%s'", index_name)
+
+        except CollectionNotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Failed to delete index '%s': %s", index_name, str(e))
+            raise VectorStoreError(f"Failed to delete index '{index_name}': {str(e)}") from e
+
+    def remove_document(self, index_name: str, key: str) -> None:
+        """Remove a specific document from an index by its key.
+
+        Arguments:
+            index_name: Name of the index/collection
+            key: Key of the document to remove
+
+        Exceptions:
+            CollectionNotFoundError: If the specified index doesn't exist
+            VectorStoreError: If removal fails or document not found
+        """
+        try:
+            collection = self.get_or_create_collection(index_name, for_embedding=False)
+
+            # Find document by key
+            results = collection.get(where={"type": index_name, "key": key})
+
+            if not results["ids"]:
+                raise VectorStoreError(f"No document found with key '{key}' in index '{index_name}'")
+
+            # Delete all matching documents (there should be only one due to deduplication)
+            collection.delete(ids=results["ids"])
+            logger.info(
+                "Successfully removed %d document(s) with key '%s' from index '%s'",
+                len(results["ids"]),
+                key,
+                index_name,
+            )
+
+        except VectorStoreError:
+            raise
+        except Exception as e:
+            logger.error("Failed to remove document with key '%s' from index '%s': %s", key, index_name, str(e))
+            if "does not exist" in str(e).lower():
+                raise CollectionNotFoundError(f"Index '{index_name}' does not exist") from e
+            raise VectorStoreError(f"Failed to remove document: {str(e)}") from e

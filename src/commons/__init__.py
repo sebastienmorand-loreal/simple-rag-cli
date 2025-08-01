@@ -1,1 +1,1 @@
-# Commons package
+"""Commons package for shared utilities."""

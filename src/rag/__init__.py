@@ -1,1 +1,1 @@
-# RAG package
+"""RAG functionality package."""

@@ -1,13 +1,29 @@
 """Main entry point for simple-rag CLI application."""
 
 import logging
+import os
+import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
 
 import colorlog
 import typer
 
+# Set environment variables to suppress transformer warnings before any imports
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Add src directory to Python path for local imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Local imports (after path modification)
+# pylint: disable=wrong-import-position
 from rag.cli import app as rag_app
+
+# Filter out FutureWarning about encoder_attention_mask deprecation and model sharding warnings
+warnings.filterwarnings("ignore", message=".*encoder_attention_mask.*is deprecated.*", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*layers were not sharded.*", category=UserWarning)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,6 +33,7 @@ for logger_name in (
     "transformers.modeling_utils",
     "sentence_transformers.SentenceTransformer",
     "chromadb.db.mixins.embeddings_queue",
+    "transformers.models.bert.modeling_bert",
 ):
     logging.getLogger(logger_name).setLevel(logging.WARNING)
 
@@ -54,7 +71,7 @@ def setup_logging(debug: bool = False) -> str:
 
 
 @app.callback()
-def main(
+def callback(
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
 ) -> None:
     """Simple RAG CLI tool using ChromaDB for local vector storage."""

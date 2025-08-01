@@ -41,7 +41,7 @@ def get_vector_store() -> VectorStoreService:
 
 @app.command("load")
 def load_command(
-    index: str = typer.Option(..., "--index", help="Index name to store the data"),
+    index: str = typer.Option(..., "--index", "-i", help="Index name to store the data"),
     file_path: Optional[Path] = typer.Option(None, "-f", "--file", help="JSONL file path for batch loading"),
     key: Optional[str] = typer.Argument(None, help="Key text to vectorize (for single entry)"),
     value: Optional[str] = typer.Argument(None, help="Associated value (for single entry)"),
@@ -104,7 +104,7 @@ def load_command(
 
 @app.command("retrieve")
 def retrieve_command(
-    index: str = typer.Option(..., "--index", help="Index name to search in"),
+    index: str = typer.Option(..., "--index", "-i", help="Index name to search in"),
     query: str = typer.Argument(..., help="Query text to search for"),
     threshold: Optional[float] = typer.Option(None, "--threshold", "-t", help="Distance threshold to consider"),
     number: int = typer.Option(1, "--number", "-n", help="Number of values to display"),
@@ -226,7 +226,7 @@ def list_command() -> None:
 
 
 @app.command("info")
-def info_command(index: str = typer.Option(..., "--index", help="Index name to get information about")) -> None:
+def info_command(index: str = typer.Option(..., "--index", "-i", help="Index name to get information about")) -> None:
     """Get detailed information about a specific index."""
     vector_store = get_vector_store()
 
@@ -254,3 +254,141 @@ def info_command(index: str = typer.Option(..., "--index", help="Index name to g
         logger.error("Unexpected error during info: %s", str(e))
         console.print(f"[red]Unexpected error: {str(e)}[/red]")
         raise typer.Exit(1)
+
+
+@app.command("dump")
+def dump_command(index: str = typer.Option(..., "--index", "-i", help="Index name to dump data from")) -> None:
+    """Dump all data from a specific index in JSONL format."""
+    vector_store = get_vector_store()
+
+    try:
+        # Get all documents from the collection
+        data = vector_store.dump_all_data(index)
+
+        if not data:
+            console.print(f"[yellow]Index '{index}' is empty[/yellow]")
+            return
+
+        # Output each entry as JSONL
+        for entry in data:
+            metadata = entry.get("metadata", {})
+            output_entry = {"key": metadata.get("key", ""), "value": metadata.get("value", "")}
+            print(json.dumps(output_entry))
+
+    except CollectionNotFoundError as e:
+        console.print(f"[red]Error: {str(e)}[/red]")
+        console.print("Available indexes:")
+        try:
+            collections = vector_store.list_collections()
+            for collection in collections:
+                console.print(f"  - {collection}")
+        except VectorStoreError:
+            console.print("  Unable to list available indexes")
+        raise typer.Exit(1)
+
+    except VectorStoreError as e:
+        console.print(f"[red]Error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+    except Exception as e:
+        logger.error("Unexpected error during dump: %s", str(e))
+        console.print(f"[red]Unexpected error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("drop")
+def drop_command(index: str = typer.Option(..., "--index", "-i", help="Index name to delete")) -> None:
+    """Delete an entire index and all its data."""
+    vector_store = get_vector_store()
+
+    try:
+        # Confirm deletion
+        if not typer.confirm(f"Are you sure you want to delete index '{index}' and all its data?"):
+            console.print("[yellow]Operation cancelled[/yellow]")
+            return
+
+        vector_store.delete_collection(index)
+        console.print(f"[green]Successfully deleted index '{index}'[/green]")
+
+    except CollectionNotFoundError as e:
+        console.print(f"[red]Error: {str(e)}[/red]")
+        console.print("Available indexes:")
+        try:
+            collections = vector_store.list_collections()
+            for collection in collections:
+                console.print(f"  - {collection}")
+        except VectorStoreError:
+            console.print("  Unable to list available indexes")
+        raise typer.Exit(1)
+
+    except VectorStoreError as e:
+        console.print(f"[red]Error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+    except Exception as e:
+        logger.error("Unexpected error during drop: %s", str(e))
+        console.print(f"[red]Unexpected error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("remove")
+def remove_command(
+    index: str = typer.Option(..., "--index", "-i", help="Index name to remove data from"),
+    key: str = typer.Argument(..., help="Key to remove from the index"),
+) -> None:
+    """Remove a specific key from an index."""
+    vector_store = get_vector_store()
+
+    try:
+        vector_store.remove_document(index, key)
+        console.print(f"[green]Successfully removed key '{key}' from index '{index}'[/green]")
+
+    except CollectionNotFoundError as e:
+        console.print(f"[red]Error: {str(e)}[/red]")
+        console.print("Available indexes:")
+        try:
+            collections = vector_store.list_collections()
+            for collection in collections:
+                console.print(f"  - {collection}")
+        except VectorStoreError:
+            console.print("  Unable to list available indexes")
+        raise typer.Exit(1)
+
+    except VectorStoreError as e:
+        console.print(f"[red]Error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+    except Exception as e:
+        logger.error("Unexpected error during remove: %s", str(e))
+        console.print(f"[red]Unexpected error: {str(e)}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("mcp")
+def mcp_command() -> None:
+    """Start the MCP (Model Context Protocol) server with stdio transport."""
+    import asyncio
+    import sys
+
+    try:
+        # Import MCP server functionality
+        from simplerag_mcp.mcp_server import main as mcp_main
+
+        # DO NOT print anything to stdout - it interferes with MCP protocol
+        # Only log errors to stderr if needed
+
+        # Run the MCP server directly
+        asyncio.run(mcp_main())
+
+    except KeyboardInterrupt:
+        # Exit quietly on Ctrl+C
+        sys.exit(0)
+    except ImportError as e:
+        # Print error to stderr, not stdout
+        print(f"Error: MCP dependencies not installed: {str(e)}", file=sys.stderr)
+        print("Run: uv add mcp", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        # Log to stderr only
+        print(f"Failed to start MCP server: {str(e)}", file=sys.stderr)
+        sys.exit(1)
