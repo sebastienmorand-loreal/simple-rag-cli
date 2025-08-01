@@ -26,6 +26,7 @@ dependencies = [
     "torch>=2.0.0",
     "sentence-transformers>=2.2.0",
     "colorlog>=6.7.0",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
